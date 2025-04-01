@@ -1,76 +1,95 @@
-from pprint import pprint
+import os
 import json
-from openai import OpenAI
+import openai
+import inspect
+import requests
+from typing_extensions import TypedDict, Literal
+from dotenv import load_dotenv
+from pprint import pprint
+from pydantic import TypeAdapter
 
-# Implement 3 hàm
+load_dotenv()
 
+TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
+JINA_API_KEY = os.getenv("JINA_API_KEY")
 
-def get_current_weather(location: str, unit: str):
+client = openai.OpenAI(
+    base_url="https://api.together.xyz/v1",
+    api_key=TOGETHER_API_KEY,
+)
+
+# Định nghĩa kiểu dữ liệu
+UnitType = Literal["celsius", "fahrenheit"]
+
+class WeatherParams(TypedDict):
+    location: str
+    unit: UnitType
+
+class StockParams(TypedDict):
+    symbol: str
+
+class WebsiteParams(TypedDict):
+    url: str
+
+# Các function
+def get_current_weather(location: str, unit: UnitType):
     """Get the current weather in a given location"""
-    # Hardcoded response for demo purposes
-    return "Trời rét vãi nôi, 7 độ C"
-
+    return "Hà Nội hôm nay 7 độ C, trời rét, mưa phùn và sương mù dày"
 
 def get_stock_price(symbol: str):
-    # Không làm gì cả, để hàm trống
+    """Get the current stock price of a given symbol"""
     pass
 
-
-# Bài 2: Implement hàm `view_website`, sử dụng `requests` và JinaAI để đọc markdown từ URL
 def view_website(url: str):
-    # Không làm gì cả, để hàm trống
-    pass
-
-
-# Bài 1: Thay vì tự viết object `tools`, hãy xem lại bài trước, sửa code và dùng `inspect` và `TypeAdapter` để define `tools`
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_weather",
-            "description": "Get the current weather in a given location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city name"
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "The temperature unit"
-                    }
-                },
-                "required": ["location", "unit"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_stock_price",
-            "description": "Get the current stock price of a given symbol",
-            "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]}
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "view_website",
-            "description": "View a website",
-            "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}
-        }
+    """Retrieve the markdown content of a website using JinaAI Readability API."""
+    
+    headers = {
+        "Authorization": f"Bearer {JINA_API_KEY}"
     }
-]
+    
+    jina_url = f"https://r.jina.ai/{url}"
 
-# https://platform.openai.com/api-keys
-client = OpenAI(
-    api_key='sk-proj-XXXX',
-)
-COMPLETION_MODEL = "gpt-4o-mini"
+    try:
+        print(f"📡 Đang gửi request đến JinaAI: {jina_url}")
+        response = requests.get(jina_url, headers=headers)
 
-messages = [{"role": "user", "content": "Thời tiết ở Hà Nội hôm nay thế nào?"}]
+        print(f"📥 Phản hồi HTTP: {response.status_code}")
+        print(f"🔍 Nội dung phản hồi: {response.text[:500]}")  # In ra tối đa 500 ký tự
+        
+        response.raise_for_status()
+        return response.text  # Trả về nội dung markdown
+
+    except requests.exceptions.HTTPError as http_err:
+        return f"❌ HTTP error: {http_err} - Response: {response.text}"
+    except requests.exceptions.RequestException as req_err:
+        return f"❌ Request error: {req_err}"
+    
+# Tạo tools tự động từ function list
+def generate_tools(*funcs):
+    tools = []
+    for func in funcs:
+        sig = inspect.signature(func)
+        params = {k: v.annotation for k, v in sig.parameters.items()}
+        adapter = TypeAdapter(TypedDict("Params", params))
+        
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": func.__name__,
+                "description": func.__doc__.strip() if func.__doc__ else "",
+                "parameters": adapter.json_schema()
+            }
+        })
+    return tools
+
+# Tạo danh sách tools
+tools = generate_tools(get_current_weather, get_stock_price, view_website)
+
+COMPLETION_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+
+# Nhập URL từ bàn phím
+user_url = input("Nhập URL trang web cần tóm tắt: ")
+messages = [{"role": "user", "content": f"Tóm tắt nội dung trang web {user_url}"}]
 
 print("Bước 1: Gửi message lên cho LLM")
 pprint(messages)
@@ -78,41 +97,35 @@ pprint(messages)
 response = client.chat.completions.create(
     model=COMPLETION_MODEL,
     messages=messages,
-    tools=tools
+    tools=tools,
+    tool_choice="auto"
 )
 
-print("Bước 2: LLM đọc và phân tích ngữ cảnh LLM")
+print("\nBước 2: LLM đọc và phân tích ngữ cảnh")
 pprint(response)
 
-print("Bước 3: Lấy kết quả từ LLM")
+print("\nBước 3: Lấy kết quả từ LLM")
 tool_call = response.choices[0].message.tool_calls[0]
-
 pprint(tool_call)
 arguments = json.loads(tool_call.function.arguments)
 
-print("Bước 4: Chạy function get_current_weather ở máy mình")
+print("Bước 4: Chạy function tương ứng")
 
-if tool_call.function.name == 'get_current_weather':
-    weather_result = get_current_weather(
-        arguments.get('location'), arguments.get('unit'))
-    # Hoặc code này cũng tương tự
-    # weather_result = get_current_weather(**arguments)
-    print(f"Kết quả bước 4: {weather_result}")
+if tool_call.function.name == 'view_website':
+    website_content = view_website(**arguments)
+    print(f"\nKết quả bước 4: {website_content[:500]}...")  # Chỉ in 500 ký tự đầu để xem trước
 
-    print("Bước 5: Gửi kết quả lên cho LLM")
+    print("\nBước 5: Gửi nội dung website lên cho LLM để tóm tắt")
     messages.append(response.choices[0].message)
     messages.append({
         "role": "tool",
-        "content": weather_result,
-        "tool_call_id": tool_call.id
+        "tool_call_id": tool_call.id,
+        "name": tool_call.function.name,
+        "content": website_content
     })
-
-    pprint(messages)
 
     final_response = client.chat.completions.create(
         model=COMPLETION_MODEL,
         messages=messages
-        # Ở đây không có tools cũng không sao, vì ta không cần gọi nữa
     )
-    print(
-        f"Kết quả cuối cùng từ LLM: {final_response.choices[0].message.content}.")
+    print(f"Kết quả cuối cùng từ LLM: {final_response.choices[0].message.content}.")
