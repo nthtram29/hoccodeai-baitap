@@ -100,28 +100,22 @@ while True:
         print("Thoát chương trình.")
         break
     
-    # Thêm câu hỏi vào hội thoại
+ 
     messages.append({"role": "user", "content": question})
 
-    # Gọi OpenAI để xử lý câu hỏi và trả về tool call
     response = get_completion(messages)
     first_choice = response.choices[0]
     finish_reason = first_choice.finish_reason
 
-    pprint(first_choice)
-
-    # Xử lý tool call, tìm kiếm trên Wikipedia nếu chưa có thông tin trong ChromaDB
     if finish_reason != "stop":
         tool_call = first_choice.message.tool_calls[0]
 
         tool_call_function = tool_call.function
         tool_call_arguments = json.loads(tool_call_function.arguments)
 
-        # Gọi hàm tool function từ FUNCTION_MAP
         tool_function = FUNCTION_MAP[tool_call_function.name]
         result = tool_function(**tool_call_arguments)
-        print(f"result: {result}")
-        # Cập nhật kết quả trả về từ tool call vào trong hội thoại
+      
         messages.append(first_choice.message)
         messages.append({
             "role": "tool",
@@ -131,9 +125,9 @@ while True:
         })
 
         
-
-        # Xây dựng prompt từ kết quả trả về
-        CONTEXT = result
+        q = collection.query(query_texts=[question], n_results=3)
+        CONTEXT = q["documents"][0]
+       
         prompt = f"""
         Use the following CONTEXT to answer the QUESTION at the end.
         If you don't know the answer, just say that you don't know, don't try to make up an answer.
